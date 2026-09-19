@@ -59,6 +59,48 @@ int main(void)
       Command cmd;
       if (parse(line, &cmd) == 1)
       {
+        pid_t pid = fork();
+        int status;
+        
+        if (pid < 0) // fail case
+        {
+          perror("fork failed");
+        } 
+        // child, executing command, if command returns anything we know it failed so we throw up error message and exit
+        // if no return, it executed successfully and exit process
+        else if (pid == 0) 
+        {
+          if (execvp(cmd.pgm->pgmlist[0], cmd.pgm->pgmlist) == -1)
+          {
+            perror("execvp failed");
+            exit(EXIT_FAILURE);
+          }
+        }
+        else // parent
+        {
+          if (!cmd.background) // check for background, not implemented yet
+          {
+            pid_t child_res = waitpid(pid, &status, 0);
+            if (child_res < 0) // if it returns less than 0, error
+            {
+              perror("child wait error");
+            }
+            // if waitpid returns child id, we only know status changed, so we need to also check if it exited
+            // we then check the exit code, if its not 0, we know theres an error so print that, else its successful
+            // REMEMBER TO REMOVE PRINTS AFTER FINISHED
+            else if (child_res == pid && WIFEXITED(status)) 
+            {
+              if (WEXITSTATUS(status) != 0)
+              {
+                fprintf(stderr, "child process exited with error code %d\n", WEXITSTATUS(status));
+              }
+              else
+              {
+                printf("child process finished successfully\n");
+              }
+            }
+          }
+        }
         // Print the parsed command
         print_cmd(&cmd);
       }
