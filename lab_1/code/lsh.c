@@ -32,7 +32,6 @@
 static void print_cmd(Command *cmd);
 static void print_pgm(Pgm *p);
 void stripwhite(char *);
-char** ll_to_array(Pgm *p);
 
 int main(void)
 {
@@ -60,50 +59,177 @@ int main(void)
       Command cmd;
       if (parse(line, &cmd) == 1)
       {
-        pid_t pid = fork();
-        int status;
-        
-        if (pid < 0) // fail case
+        // we want to count the commands so that we can reverse the order (so it becomes correct) abit later
+        size_t cmd_size = 0;
+        Pgm *temp = cmd.pgm;
+        while (temp != NULL)
         {
-          perror("fork failed");
-        } 
-        // child, executing command, if command returns anything we know it failed so we throw up error message and exit
-        // if no return, it executed successfully and exit process
-        else if (pid == 0) 
-        {
-          if (execvp(cmd.pgm->pgmlist[0], cmd.pgm->pgmlist) == -1)
-          {
-            perror("execvp failed");
-            exit(EXIT_FAILURE);
-          }
+          cmd_size++;
+          temp = temp->next;
         }
-        else // parent
+
+        if (cmd_size > 1) // pipe branch
         {
-          if (!cmd.background) // check for background, not implemented yet
+          int pipe_status = 0; // setting a pipe_status to know if we need to cancel forking or if its safe to continue
+
+          // array of pointers to the "argv" arrays of each command
+          char *** cmd_array = malloc(cmd_size * sizeof(char**));
+          Pgm *p = cmd.pgm;
+          // reversing the order of the commands so we can go by 0 indexing, this means we would avoid having to traverse the LL more than once
+          for (size_t i = cmd_size; i > 0; i--)
           {
-            pid_t child_res = waitpid(pid, &status, 0);
-            if (child_res < 0) // if it returns less than 0, error
+            cmd_array[i - 1] = p->pgmlist;
+            p = p->next;
+          }
+
+          // need to create and store our fds in advance so we can dup and close them in the child processes
+          int** pipe_fds = malloc((cmd_size - 1) * sizeof(int*));
+
+          // Since we want to unconditionally free and close any amount of pipes at the end of the branch, we keep track of how many pipes we create successfully
+          // in case of failure halfway through, we know exacly how many pipes we need to close at the end of the branch
+          // this is just to prevent having duplicate code and keeping it more readable
+          int pipes = 0;
+          for (size_t i = 0; i < cmd_size - 1; i++)
+          {
+            pipe_fds[i] = malloc(2 * sizeof(int));
+            if (pipe(pipe_fds[i]) == -1)
             {
-              perror("child wait error");
+              perror("pipe failed");
+              pipe_status = -1;
+              break;
             }
-            // if waitpid returns child id, we only know status changed, so we need to also check if it exited
-            // we then check the exit code, if its not 0, we know theres an error so print that, else its successful
-            // REMEMBER TO REMOVE PRINTS AFTER FINISHED
-            else if (child_res == pid && WIFEXITED(status)) 
+            pipes++;
+          }
+
+          // array to hold the pids, we initialize it to NULL because we do not want any grabage values in it
+          // reason being that if we skip a fork() due to failure, we want to avoid an edge case where we try to wait for a pid that doesnt exist
+          pid_t *pids = NULL;
+          if (pipe_status == -1) // if something with piping failed, skip the fork stage and go straight to freeing memory
+          {
+            printf("piping failed\n");
+          }
+          else { // successful case
+            pids = malloc(cmd_size * sizeof(pid_t));
+
+            for (size_t i = 0; i < cmd_size; i++)
             {
-              if (WEXITSTATUS(status) != 0)
+              pid_t pid = fork();
+              if (pid < 0) // fail case
               {
-                fprintf(stderr, "child process exited with error code %d\n", WEXITSTATUS(status));
+                // adding a sentinel value for failed forks
+                // there are more correct ways to handle this
+                // however, for now simplicity will do
+                pids[i] = -1;
+                perror("fork failed");
               }
+              else if (pid == 0) // child
+              {
+                if (i > 0) // if not first stage, dup2 needs to READ from previous pipe
+                {
+                  dup2(pipe_fds[i - 1][0], STDIN_FILENO);
+                }
+                if (i < cmd_size - 1) // if not last stage, dup2 needs to WRITE to next pipe
+                {
+                  dup2(pipe_fds[i][1], STDOUT_FILENO);
+                }
+                // close all pipe fds in child
+                for (size_t j = 0; j < cmd_size - 1; j++)
+                {
+                  close(pipe_fds[j][0]);
+                  close(pipe_fds[j][1]);
+                  free(pipe_fds[j]);
+                }
+
+                // execvp doesnt return if successful so we only need to know if it failed
+                if (execvp(cmd_array[i][0], cmd_array[i]) == -1)
+                {
+                  perror("execvp failed");
+                  exit(EXIT_FAILURE);
+                }
+              }
+              // parent stores the pid in the pid array
               else
               {
-                printf("child process finished successfully\n");
+                pids[i] = pid;
+              }
+            }
+
+            if (!cmd.background)
+            {
+              for (size_t i = 0; i < cmd_size; i++)
+              {
+                if (pids[i] == -1) continue; // skip waiting for failed forks
+
+                int status;
+                if (waitpid(pids[i], &status, 0) < 0)
+                {
+                  perror("waitpid failed");
+                }
+                else if (WIFEXITED(status) && WEXITSTATUS(status) != 0)
+                {
+                  fprintf(stderr, "child process %d exited, error: %d\n", pids[i], WEXITSTATUS(status));
+                }
+                else {
+                  printf("child process %d successful\n", pids[i]);
+                }
               }
             }
           }
+
+          for (size_t j = 0; j < pipes; j++)
+          {
+            close(pipe_fds[j][0]);
+            close(pipe_fds[j][1]);
+          }
+
+          for (size_t i = 0; i < pipes; i++)
+          {
+            free(pipe_fds[i]);
+          }
+          free(pipe_fds);
+          free(cmd_array);
+          free(pids);
         }
-        // Print the parsed command
-        print_cmd(&cmd);
+        else // single command branch
+        {
+          pid_t pid = fork();
+          int status;
+          
+          if (pid < 0) // fail case
+          {
+            perror("fork failed");
+          } 
+          // child, executing command, if command returns anything we know it failed so we throw up error message and exit
+          // if no return, it executed successfully and exit process
+          else if (pid == 0) 
+          {
+            if (execvp(cmd.pgm->pgmlist[0], cmd.pgm->pgmlist) == -1)
+            {
+              perror("execvp failed");
+              exit(EXIT_FAILURE);
+            }
+          }
+          else // parent
+          {
+            if (!cmd.background) // check for background, not implemented yet
+            {
+              int status;
+              if (waitpid(pid, &status, 0) < 0)
+              {
+                perror("waitpid failed");
+              }
+              else if (WIFEXITED(status) && WEXITSTATUS(status) != 0)
+              {
+                fprintf(stderr, "child process %d exited, error: %d\n", pid, WEXITSTATUS(status));
+              }
+              else {
+                printf("child process %d successful\n", pid);
+              }
+            }
+          }
+          // Print the parsed command
+          print_cmd(&cmd);
+        }
       }
       else
       {
@@ -188,24 +314,4 @@ void stripwhite(char *string)
   }
 
   string[++i] = '\0';
-}
-
-
-// helper for turning Pgm linked list into in order array
-char** ll_to_array(Pgm *p)
-{
-  int size = 0;
-  while (p->next != NULL)
-  {
-    size++;
-    p = p->next;
-  }
-  char **arr = malloc((size + 1) * sizeof(char*));
-  while (size > 0)
-  {
-    arr[size - 1] = p->pgmlist[0];
-    p = p->next;
-    size--;
-  }
-  return arr;
 }
