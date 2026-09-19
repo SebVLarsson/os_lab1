@@ -32,6 +32,7 @@
 static void print_cmd(Command *cmd);
 static void print_pgm(Pgm *p);
 void stripwhite(char *);
+char** ll_to_array(Pgm *p);
 
 int main(void)
 {
@@ -187,4 +188,24 @@ void stripwhite(char *string)
   }
 
   string[++i] = '\0';
+}
+
+
+// helper for turning Pgm linked list into in order array
+char** ll_to_array(Pgm *p)
+{
+  int size = 0;
+  while (p->next != NULL)
+  {
+    size++;
+    p = p->next;
+  }
+  char **arr = malloc((size + 1) * sizeof(char*));
+  while (size > 0)
+  {
+    arr[size - 1] = p->pgmlist[0];
+    p = p->next;
+    size--;
+  }
+  return arr;
 }
