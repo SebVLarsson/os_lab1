@@ -39,6 +39,14 @@ int main(void)
   {
     char *line;
     line = readline("> ");
+    
+    // EOF Check add signal handling later
+    if (line == NULL)
+    {
+      free(line);
+      printf("EOF reached, exiting shell.\n");
+      break; 
+    }
 
     // Remove leading and trailing whitespace from the line
     stripwhite(line);
