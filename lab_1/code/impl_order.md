@@ -22,3 +22,13 @@
     14. Realised there are cases if a fork fails, we may have garbage values
         1. Upon fork() failure, overwrite current loop pid with sentinel value
         2. Implement sentinel value check during waiting to prevent edge case deadlock
+
+### 3. I/O Redirection (~3 hours, documentation bonanza part 2)
+    1. Added a cmd.rstdin exist check in single command branch, if exist open a new fd
+    2. Added error check -1, if no error dup2 the new fd and close it
+    3. Added same logic for cmd.rstdout
+    4. Added same logic for multi cmd to only apply to first or last stage
+    5. Refactor multiple times trying to get pesky bug
+        1. Bug was due to ordering
+        2. Second bug appeared where a closing bracket was accidently added
+    
