@@ -18,6 +18,7 @@
  */
 #include <assert.h>
 #include <ctype.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -129,10 +130,40 @@ int main(void)
                 {
                   dup2(pipe_fds[i - 1][0], STDIN_FILENO);
                 }
+
+                // if first stage AND redirection IN is not NULL, ensure we open a new file descriptor and dup2 it into the stdin of the child
+                // NOTE: not fan of having stray fds, ask TAs for ideas
+                if (i == 0 && cmd.rstdin)
+                {
+                  int fd = open(cmd.rstdin, O_RDONLY);
+                  if (fd == -1)
+                  {
+                    perror("open failed");
+                    exit(EXIT_FAILURE);
+                  }
+                  dup2(fd, STDIN_FILENO);
+                  close(fd);
+                }
+              
                 if (i < cmd_size - 1) // if not last stage, dup2 needs to WRITE to next pipe
                 {
                   dup2(pipe_fds[i][1], STDOUT_FILENO);
                 }
+
+                // if last stage AND redirection OUT is not null, open new fd and dup2 it into the stdout of the child
+                // NOTE: not fan of having stray fds, ask TAs for ideas
+                if (i == cmd_size - 1 && cmd.rstdout)
+                {
+                  int fd = open(cmd.rstdout, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                  if (fd == -1)
+                  {
+                    perror("open failed");
+                    exit(EXIT_FAILURE);
+                  }
+                  dup2(fd, STDOUT_FILENO);
+                  close(fd);
+                }
+
                 // close all pipe fds in child
                 for (size_t j = 0; j < cmd_size - 1; j++)
                 {
@@ -203,6 +234,32 @@ int main(void)
           // if no return, it executed successfully and exit process
           else if (pid == 0) 
           {
+
+            // checking if redirection IN is not null, if it isnt open fd and dup2 
+            if (cmd.rstdin)
+            {
+              int fd = open(cmd.rstdin, O_RDONLY);
+              if (fd == -1)
+              {
+                perror("open failed");
+                exit(EXIT_FAILURE);
+              }
+              dup2(fd, STDIN_FILENO);
+              close(fd);
+            }
+
+            // check if redirection for out is not null, if it isnt open fd and dup2
+            if (cmd.rstdout)
+            {
+              int fd = open(cmd.rstdout, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+              if (fd == -1)
+              {
+                perror("open failed");
+                exit(EXIT_FAILURE);
+              }
+              dup2(fd, STDOUT_FILENO);
+              close(fd);
+            }
             if (execvp(cmd.pgm->pgmlist[0], cmd.pgm->pgmlist) == -1)
             {
               perror("execvp failed");
