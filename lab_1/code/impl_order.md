@@ -32,3 +32,12 @@
         1. Bug was due to ordering
         2. Second bug appeared where a closing bracket was accidently added
     
+
+### 4. Background Execution (~40 minutes, 5 minutes of code, 10 minutes of googling and 10 minutes of bugfixing)
+    1. Because of how I built the cmd.background checks, conceptually and realistically extremely easy to implement
+        1. In retrospect, need to figure out how to get bg jobs to finish without a keyboard action (?) get to this later
+    2. I felt from the start the easiest way to keep track of the processes was just to have a static control int and a static array to store them
+    3. Add the else statements to the if !cmd.background in both branches
+    4. Add a function to kill finished bg processes
+        1. Spent about 10 minutes googling to try and find how to get children to instantly return their status
+    5. Spent 10 minutes trying to figure out why compiler is telling me bg_pids is undeclared, turns out, I am an idiot for writing bg_pids instead of the static array which i named bg_jobs
