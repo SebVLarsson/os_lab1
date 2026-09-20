@@ -41,3 +41,25 @@
     4. Add a function to kill finished bg processes
         1. Spent about 10 minutes googling to try and find how to get children to instantly return their status
     5. Spent 10 minutes trying to figure out why compiler is telling me bg_pids is undeclared, turns out, I am an idiot for writing bg_pids instead of the static array which i named bg_jobs
+
+
+### 5. Builtin's (2-2½ hours)
+    1. Started off by researching exacly what this meant, how to reach and how to execute replicas of this
+    2. Started off with identifying if a command was a builtin with is_builtin function
+        1. Originally just returned 1 for builtin, but I realised I had to swap approach to identify cd and kill differently
+        2. turned into string compare function returning 1 for cd, 2 for exit and 0 for not being a builtin
+    3. Added the logic into the main loop (Took a while figuring out where and how to do it)
+        1. Started with no control variable, turned out I need two separate cases (implemented switch case)
+        2. changed the mainloop to check if builtin was identified or not
+    4. Implemented builtin_cd which seemed fairly simple as it was just two calls I had to keep track of and learn
+        1. getenv because typing simply cd should send you to home environment
+        2. chdir which was fairly simple, also learnt that it supports '..' by default so saved from having to implement that
+    5. Had to debug for abit because I accidently set target to p->pgmlist[0]
+    6. Once again went back to documentation to figure out HOW to KILL processes (Ask TA, this is fascinating)
+        1. This is an absolute rabbithole, I went with SIGKILL only because it was simple
+        2. Theres supposedly also multiple "levels" of terminating/killing a process
+        3. From what I gathered, if you're doing this more professionally, you should almost always SIGTERM with a grace period before you kill anything off
+        4. I also learnt that EVEN SIGKILL which is an absolute kill switch is still just a signal "kernel, do this". because of this we still need to wait for the processes to be killed
+    7. Added a simple waitpid loop to ensure all processes are killed before actually exiting
+    8. Lastly, added the builtin_exit to EOF (CTRL+D) logic
+
