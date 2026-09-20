@@ -31,9 +31,15 @@
 
 #include "parse.h"
 
+// background jobs, keeping it small
+#define MAX_BG_JOBS 16
+static pid_t bg_jobs[MAX_BG_JOBS];
+static int bg_job_count = 0;
+
 static void print_cmd(Command *cmd);
 static void print_pgm(Pgm *p);
 void stripwhite(char *);
+void destroy_bg_jobs();
 
 int main(void)
 {
@@ -41,6 +47,8 @@ int main(void)
   {
     char *line;
     line = readline("> ");
+    
+    destroy_bg_jobs(); // before we start another iteration, we're just gonna ensure we can clean up any bg jobs that are finished
     
     // EOF Check add signal handling later
     if (line == NULL)
@@ -212,6 +220,20 @@ int main(void)
                 }
               }
             }
+            else 
+            {
+              if (bg_job_count < MAX_BG_JOBS)
+              {
+                for (size_t i = 0; i < cmd_size; i++)
+                {
+                  if (pids[i] != -1)
+                  {
+                    bg_jobs[bg_job_count++] = pids[i];
+                  }
+                  printf("debug: background job %d started\n", pids[i]);
+                }
+              }
+            }
           }
 
           for (size_t i = 0; i < pipes; i++)
@@ -281,6 +303,14 @@ int main(void)
               }
               else {
                 printf("child process %d successful\n", pid);
+              }
+            }
+            else 
+            {
+              if (bg_job_count < MAX_BG_JOBS)
+              {
+                bg_jobs[bg_job_count++] = pid;
+                printf("debug: background job %d started\n", pid);
               }
             }
           }
@@ -371,4 +401,26 @@ void stripwhite(char *string)
   }
 
   string[++i] = '\0';
+}
+
+
+// If a job is called to be a background job, we cannot waidpid as we did before with foreground jobs
+// Because of that we need to ensure we have a function we can periodically call, such as every main loop iteration
+// essentially we loop through the static array of background jobs, WNOHANG will always return status immediately
+// if a result is greater than 0, we know its finished and can subsequently remove it from the array
+// we then replace it with the last, decrement i and rerun the loop (to ensure we dont randomly skip the job we replaced the finished with)
+void destroy_bg_jobs()
+{
+  for (int i = 0; i < bg_job_count; i++)
+  {
+    int status;
+    pid_t result = waitpid(bg_jobs[i], &status, WNOHANG);
+    if (result > 0)
+    {
+      printf("bg job %d finished\n", bg_jobs[i]);
+      bg_jobs[i] = bg_jobs[bg_job_count - 1];
+      bg_job_count--;
+      i--;
+    }
+  }
 }
