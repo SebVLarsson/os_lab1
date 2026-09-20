@@ -21,6 +21,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/wait.h>
 #include <readline/readline.h>
 #include <readline/history.h>
 
@@ -88,7 +89,7 @@ int main(void)
           // Since we want to unconditionally free and close any amount of pipes at the end of the branch, we keep track of how many pipes we create successfully
           // in case of failure halfway through, we know exacly how many pipes we need to close at the end of the branch
           // this is just to prevent having duplicate code and keeping it more readable
-          int pipes = 0;
+          size_t pipes = 0;
           for (size_t i = 0; i < cmd_size - 1; i++)
           {
             pipe_fds[i] = malloc(2 * sizeof(int));
@@ -154,6 +155,12 @@ int main(void)
               }
             }
 
+            for (size_t j = 0; j < pipes; j++)
+            {
+              close(pipe_fds[j][0]);
+              close(pipe_fds[j][1]);
+            }
+
             if (!cmd.background)
             {
               for (size_t i = 0; i < cmd_size; i++)
@@ -176,12 +183,6 @@ int main(void)
             }
           }
 
-          for (size_t j = 0; j < pipes; j++)
-          {
-            close(pipe_fds[j][0]);
-            close(pipe_fds[j][1]);
-          }
-
           for (size_t i = 0; i < pipes; i++)
           {
             free(pipe_fds[i]);
@@ -193,7 +194,6 @@ int main(void)
         else // single command branch
         {
           pid_t pid = fork();
-          int status;
           
           if (pid < 0) // fail case
           {
