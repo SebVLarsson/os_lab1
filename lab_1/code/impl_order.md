@@ -63,3 +63,13 @@
     7. Added a simple waitpid loop to ensure all processes are killed before actually exiting
     8. Lastly, added the builtin_exit to EOF (CTRL+D) logic
 
+
+## 6. CTRL+C aka SIGNAL HANDLING (I dont even know how much time, but I am really tired of documentation :)
+    1. Implemented signal handler for standard sigaction
+        1. HOURS of documentation and fighting the compiler
+    2. Refactored and added a sigaction for children aswell
+        1. More documentation, more fighting the compiler
+    3. Added logic to ensure that the function runs when it should
+        1. Fighting the compiler
+    4. Refactored AGAIN because things didn't work as planned
+        1. More documentation and wanting to kill the compiler
