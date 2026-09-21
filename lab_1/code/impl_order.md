@@ -73,3 +73,4 @@
         1. Fighting the compiler
     4. Refactored AGAIN because things didn't work as planned
         1. More documentation and wanting to kill the compiler
+    5.  Removed destroy_bg_jobs etc to clean up code base
