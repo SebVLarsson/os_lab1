@@ -96,9 +96,6 @@ int main(void)
     setpgid(0, 0);
     tcsetpgrp(STDIN_FILENO, getpid());
 
-    //OBSOLETE, replaced by signal handler
-    //destroy_bg_jobs(); // before we start another iteration, we're just gonna ensure we can clean up any bg jobs that are finished
-
     char *line;
     line = readline("> ");
     
@@ -261,7 +258,6 @@ int main(void)
                     free(pipe_fds[j]);
                   }
 
-
                   // resetting the sigint handler to default rather than ignore for children
                   signal(SIGINT, SIG_DFL);
 
@@ -311,9 +307,6 @@ int main(void)
                   {
                     fprintf(stderr, "child process %d exited, error: %d\n", pids[i], WEXITSTATUS(status));
                   }
-                  else {
-                    printf("child process %d successful\n", pids[i]);
-                  }
                 }
                 
                 // set terminal control back to the shell since children finished
@@ -334,7 +327,6 @@ int main(void)
                       fprintf(stderr, "max bg jobs reached, %d not added\n", pids[i]);
                     }
                   }
-                  printf("debug: background job %d started\n", pids[i]);
                 }
               }
             }
@@ -420,9 +412,6 @@ int main(void)
                 {
                   fprintf(stderr, "child process %d exited, error: %d\n", pid, WEXITSTATUS(status));
                 }
-                else {
-                  printf("child process %d successful\n", pid);
-                }
 
                 tcsetpgrp(STDIN_FILENO, getpid());
 
@@ -432,7 +421,6 @@ int main(void)
                 if (bg_job_count < MAX_BG_JOBS)
                 {
                   bg_jobs[bg_job_count++] = pid;
-                  printf("debug: background job %d started\n", pid);
                 }
               }
             }
