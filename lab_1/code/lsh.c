@@ -19,6 +19,7 @@
 #include <assert.h>
 #include <ctype.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -43,16 +44,63 @@ void destroy_bg_jobs();
 int is_builtin(Pgm *p);
 void builtin_cd(Pgm *p);
 void builtin_exit();
+void sigchld_handler(int sig);
 
 
 int main(void)
 {
+  // setting up signal handles
+  struct sigaction sa;
+  sa.sa_handler = SIG_IGN; // sigaction, default
+  sigemptyset(&sa.sa_mask);
+  sa.sa_flags = 0;
+
+  // we're adding SIGINT, SIGTTIN (TERMINAL INPUT), SIGTTOU (TERMINAL OUTPUT) into the handler, so that they can be ignored by the shell
+  if (sigaction(SIGINT, &sa, NULL) == -1)
+  {
+    perror("sigaction fail: INT");
+    exit(EXIT_FAILURE);
+  }
+
+  if (sigaction(SIGTTIN, &sa, NULL) == -1)
+  {
+    perror("sigaction fail: IN");
+    exit(EXIT_FAILURE);
+  }
+
+  if (sigaction(SIGTTOU, &sa, NULL) == -1)
+  {
+    perror("sigaction fail: OUT");
+    exit(EXIT_FAILURE);
+  }
+
+  struct sigaction sc; //sigaction child, special case for SIGCHLD
+  sc.sa_handler = sigchld_handler; // upon a signal event, we want to call a predetermined funciton (that will clean up finished bg jobs)
+  sigemptyset(&sc.sa_mask);
+  sc.sa_flags = SA_RESTART;
+
+  // the whole deal here is that once a bg job is finished, the child status changes which the kernel will interpret and forward the process to th defined function via the handler
+  // it allows the shell to not have to wait for the next iteration of the loop
+  if (sigaction(SIGCHLD, &sc, NULL) == -1)
+  {
+    perror("sigaction fail: CHLD");
+    exit(EXIT_FAILURE);
+  }
+
   for (;;)
   {
+
+    // setting the shell to be a foreground process group
+    // allowing shell to be process id 0, and have its own process group id
+    // also allowing it to take input from terminal, not blocked by any other process group
+    setpgid(0, 0);
+    tcsetpgrp(STDIN_FILENO, getpid());
+
+    //OBSOLETE, replaced by signal handler
+    //destroy_bg_jobs(); // before we start another iteration, we're just gonna ensure we can clean up any bg jobs that are finished
+
     char *line;
     line = readline("> ");
-    
-    destroy_bg_jobs(); // before we start another iteration, we're just gonna ensure we can clean up any bg jobs that are finished
     
     // EOF Check add signal handling later
     if (line == NULL)
@@ -73,6 +121,8 @@ int main(void)
       Command cmd;
       if (parse(line, &cmd) == 1)
       {
+        // control var to see if its a builtin
+        // 0 for not, 1 for cd, 2 for exit
         int builtin = is_builtin(cmd.pgm);
 
         switch (builtin)
@@ -119,6 +169,12 @@ int main(void)
             // in case of failure halfway through, we know exacly how many pipes we need to close at the end of the branch
             // this is just to prevent having duplicate code and keeping it more readable
             size_t pipes = 0;
+
+            // initializing a new pgid
+            pid_t pgid = 0;
+
+            // creating all pipe fds in advance
+            // if a pipe fails, we set the pipe_status to -1 to indicate something went wrong and we know to cancel and clean it up rather than continuing a broken pipe chain
             for (size_t i = 0; i < cmd_size - 1; i++)
             {
               pipe_fds[i] = malloc(2 * sizeof(int));
@@ -154,6 +210,11 @@ int main(void)
                 }
                 else if (pid == 0) // child
                 {
+
+                  // setting the pgid of the child to the same as the first child, so that we group all children related to the same pipeline together
+                  // this allows us to send signal to the entire pipeline at once
+                  setpgid(0, (i == 0) ? 0 : pgid);
+
                   if (i > 0) // if not first stage, dup2 needs to READ from previous pipe
                   {
                     dup2(pipe_fds[i - 1][0], STDIN_FILENO);
@@ -200,6 +261,10 @@ int main(void)
                     free(pipe_fds[j]);
                   }
 
+
+                  // resetting the sigint handler to default rather than ignore for children
+                  signal(SIGINT, SIG_DFL);
+
                   // execvp doesnt return if successful so we only need to know if it failed
                   if (execvp(cmd_array[i][0], cmd_array[i]) == -1)
                   {
@@ -210,10 +275,15 @@ int main(void)
                 // parent stores the pid in the pid array
                 else
                 {
+                  // if we're not the first child, we set the pgid to the same as the first child, group all other the same pgid umbrella
+                  if (i == 0) pgid = pid;
+                  setpgid(pid, pgid);
+
                   pids[i] = pid;
                 }
               }
 
+              // close the pipes
               for (size_t j = 0; j < pipes; j++)
               {
                 close(pipe_fds[j][0]);
@@ -221,7 +291,13 @@ int main(void)
               }
 
               if (!cmd.background)
-              {
+              { // if foreground job
+
+                // set terminal control to the process group of first child so it can take input from terminal, not blocked by shell
+                // i.e for piping
+                tcsetpgrp(STDIN_FILENO, pgid);
+
+                // foreground wait() loop
                 for (size_t i = 0; i < cmd_size; i++)
                 {
                   if (pids[i] == -1) continue; // skip waiting for failed forks
@@ -239,12 +315,15 @@ int main(void)
                     printf("child process %d successful\n", pids[i]);
                   }
                 }
+                
+                // set terminal control back to the shell since children finished
+                tcsetpgrp(STDIN_FILENO, getpid());
               }
               else 
-              { 
+              { // if background job
                 for (size_t i = 0; i < cmd_size; i++)
                 {
-                  if (pids[i] != -1)
+                  if (pids[i] != -1) // -1 is our sentinel value for failed forks
                   {
                     if (bg_job_count < MAX_BG_JOBS) 
                     { // if bg job, add to our static array and increment counter
@@ -260,6 +339,7 @@ int main(void)
               }
             }
 
+            // free memory
             for (size_t i = 0; i < pipes; i++)
             {
               free(pipe_fds[i]);
@@ -280,6 +360,9 @@ int main(void)
             // if no return, it executed successfully and exit process
             else if (pid == 0) 
             {
+
+              // setting child process to be its own process group so it can take input from terminal
+              setpgid(0, 0);
 
               // checking if redirection IN is not null, if it isnt open fd and dup2 
               if (cmd.rstdin)
@@ -306,6 +389,11 @@ int main(void)
                 dup2(fd, STDOUT_FILENO);
                 close(fd);
               }
+
+              // setting signal handler back to default so it can be interrupted by ctrl+c and not ignore like the shell
+              signal(SIGINT, SIG_DFL);
+
+              // execvp doesnt return if successful so, verbal fail, silent success
               if (execvp(cmd.pgm->pgmlist[0], cmd.pgm->pgmlist) == -1)
               {
                 perror("execvp failed");
@@ -314,8 +402,15 @@ int main(void)
             }
             else // parent
             {
-              if (!cmd.background) // check for background, not implemented yet
+              
+              //parent gets it own group since its a single job
+              setpgid(pid, pid);
+
+              if (!cmd.background) // check for background
               {
+                
+                tcsetpgrp(STDIN_FILENO, pid);
+
                 int status;
                 if (waitpid(pid, &status, 0) < 0)
                 {
@@ -328,6 +423,9 @@ int main(void)
                 else {
                   printf("child process %d successful\n", pid);
                 }
+
+                tcsetpgrp(STDIN_FILENO, getpid());
+
               }
               else // if bg job, add to our static array and increment counter
               {
@@ -429,26 +527,27 @@ void stripwhite(char *string)
 }
 
 
-// If a job is called to be a background job, we cannot waidpid as we did before with foreground jobs
-// Because of that we need to ensure we have a function we can periodically call, such as every main loop iteration
-// essentially we loop through the static array of background jobs, WNOHANG will always return status immediately
-// if a result is greater than 0, we know its finished and can subsequently remove it from the array
-// we then replace it with the last, decrement i and rerun the loop (to ensure we dont randomly skip the job we replaced the finished with)
-void destroy_bg_jobs()
-{
-  for (int i = 0; i < bg_job_count; i++)
-  {
-    int status;
-    pid_t result = waitpid(bg_jobs[i], &status, WNOHANG);
-    if (result > 0)
-    {
-      printf("bg job %d finished\n", bg_jobs[i]);
-      bg_jobs[i] = bg_jobs[bg_job_count - 1];
-      bg_job_count--;
-      i--;
-    }
-  }
-}
+// OBSOLETE, replaced by signal handler
+//// If a job is called to be a background job, we cannot waidpid as we did before with foreground jobs
+//// Because of that we need to ensure we have a function we can periodically call, such as every main loop iteration
+//// essentially we loop through the static array of background jobs, WNOHANG will always return status immediately
+//// if a result is greater than 0, we know its finished and can subsequently remove it from the array
+//// we then replace it with the last, decrement i and rerun the loop (to ensure we dont randomly skip the job we replaced the finished with)
+//void destroy_bg_jobs()
+//{
+//  for (int i = 0; i < bg_job_count; i++)
+//  {
+//    int status;
+//    pid_t result = waitpid(bg_jobs[i], &status, WNOHANG);
+//    if (result > 0)
+//    {
+//      printf("bg job %d finished\n", bg_jobs[i]);
+//      bg_jobs[i] = bg_jobs[bg_job_count - 1];
+//      bg_job_count--;
+//      i--;
+//    }
+//  }
+//}
 
 // We need to check if the command is a valid builtin command
 // we start by ensuring that the function was called with a valid pgm
@@ -462,6 +561,7 @@ int is_builtin(Pgm *p)
     {
       return 1;
     } 
+
     else if (strcmp(p->pgmlist[0], "exit") == 0) 
     {
       return 2;
@@ -511,4 +611,27 @@ void builtin_exit()
     waitpid(bg_jobs[i], NULL, 0);
   }
   exit(0);
+}
+
+// function we feed to the child signal handler
+void sigchld_handler(int sig)
+{
+  // so the way the kernel handles signal functions is that they _HAVE_ to take an int as argument
+  // since we dont really care about that and just need the function to be called as we loop through all the jobs
+  // we cast the int the void to avoid compiler warnings regarding unused variables
+  // if our function was abit more elaborate and not a be all end all, get rid of bg jobs glorified loop
+  // then we'd use the int, but since we just wanna walk through ALL the bg jobs, we dont need an id to check what to remove
+  (void)sig;
+  for (int i = 0; i < bg_job_count; i++)
+  {
+    int status;
+    // WNOHANG will return if child processes are still running, so if result not greater than 0, its still running
+    pid_t result = waitpid(bg_jobs[i], &status, WNOHANG);
+    if (result > 0)
+    {
+      bg_jobs[i] = bg_jobs[bg_job_count - 1];
+      bg_job_count--;
+      i--;
+    }
+  }
 }
