@@ -40,7 +40,6 @@ static int bg_job_count = 0;
 static void print_cmd(Command *cmd);
 static void print_pgm(Pgm *p);
 void stripwhite(char *);
-void destroy_bg_jobs();
 int is_builtin(Pgm *p);
 void builtin_cd(Pgm *p);
 void builtin_exit();
@@ -514,28 +513,6 @@ void stripwhite(char *string)
   string[++i] = '\0';
 }
 
-
-// OBSOLETE, replaced by signal handler
-//// If a job is called to be a background job, we cannot waidpid as we did before with foreground jobs
-//// Because of that we need to ensure we have a function we can periodically call, such as every main loop iteration
-//// essentially we loop through the static array of background jobs, WNOHANG will always return status immediately
-//// if a result is greater than 0, we know its finished and can subsequently remove it from the array
-//// we then replace it with the last, decrement i and rerun the loop (to ensure we dont randomly skip the job we replaced the finished with)
-//void destroy_bg_jobs()
-//{
-//  for (int i = 0; i < bg_job_count; i++)
-//  {
-//    int status;
-//    pid_t result = waitpid(bg_jobs[i], &status, WNOHANG);
-//    if (result > 0)
-//    {
-//      printf("bg job %d finished\n", bg_jobs[i]);
-//      bg_jobs[i] = bg_jobs[bg_job_count - 1];
-//      bg_job_count--;
-//      i--;
-//    }
-//  }
-//}
 
 // We need to check if the command is a valid builtin command
 // we start by ensuring that the function was called with a valid pgm
